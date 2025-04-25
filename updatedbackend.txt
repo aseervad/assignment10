@@ -1,0 +1,877 @@
+backend/routes/__init__.py
+-------------------
+# This file makes the routes directory a Python package
+==================
+
+backend/routes/auth_routes.py
+-------------------
+#empty...
+=================
+
+backend/routes/test_routes.py
+-------------------
+from flask import Blueprint, jsonify, request, current_app
+from models import db, User, SpeakingTest, ListeningTest
+from config import Config
+import os
+from werkzeug.utils import secure_filename
+
+bp = Blueprint('test_routes', __name__)
+
+def allowed_file(filename):
+    return '.' in filename and filename.rsplit('.', 1)[1].lower() in Config.ALLOWED_EXTENSIONS
+
+@bp.route('/test', methods=['GET'])
+def test_route():
+    return jsonify({"message": "API is working correctly!"})
+
+# User routes
+@bp.route('/users', methods=['GET'])
+def get_users():
+    """Get all users"""
+    users = User.get_all_users()
+    result = [{"id": user.id, "name": user.name, "email": user.email} for user in users]
+    return jsonify({"status": "success", "data": result})
+
+@bp.route('/users', methods=['POST'])
+def create_user():
+    """Create a new user"""
+    data = request.get_json()
+    
+    if not data or not all(key in data for key in ['name', 'email', 'password']):
+        return jsonify({"status": "error", "message": "Missing required fields"}), 400
+    
+    # Check if user already exists
+    existing_user = User.get_user_by_email(data['email'])
+    if existing_user:
+        return jsonify({"status": "error", "message": "Email already registered"}), 409
+    
+    # Create new user
+    user = User.add_user(data['name'], data['email'], data['password'])
+    
+    return jsonify({
+        "status": "success", 
+        "message": "User created successfully",
+        "data": {"id": user.id, "name": user.name, "email": user.email}
+    }), 201
+
+# Speaking test routes
+@bp.route('/speaking-tests', methods=['GET'])
+def get_speaking_tests():
+    """Get all speaking tests"""
+    tests = SpeakingTest.get_all_tests()
+    result = [{
+        "id": test.id,
+        "user_id": test.user_id,
+        "question": test.question,
+        "response": test.response,
+        "score": test.score,
+        "created_at": test.created_at
+    } for test in tests]
+    return jsonify({"status": "success", "data": result})
+
+@bp.route('/speaking-tests', methods=['POST'])
+def create_speaking_test():
+    """Create a new speaking test"""
+    data = request.get_json()
+    
+    if not data or not all(key in data for key in ['user_id', 'question']):
+        return jsonify({"status": "error", "message": "Missing required fields"}), 400
+    
+    # Create new test
+    test = SpeakingTest.add_test(
+        user_id=data['user_id'],
+        question=data['question'],
+        response=data.get('response'),
+        score=data.get('score')
+    )
+    
+    return jsonify({
+        "status": "success", 
+        "message": "Speaking test created successfully",
+        "data": {
+            "id": test.id,
+            "user_id": test.user_id,
+            "question": test.question
+        }
+    }), 201
+
+# Get a specific speaking test by ID
+@bp.route('/speaking-tests/<int:test_id>', methods=['GET'])
+def get_speaking_test(test_id):
+    """Get a specific speaking test by ID"""
+    test = SpeakingTest.get_test_by_id(test_id)
+    
+    if not test:
+        return jsonify({"status": "error", "message": "Test not found"}), 404
+    
+    return jsonify({
+        "status": "success", 
+        "data": {
+            "id": test.id,
+            "user_id": test.user_id,
+            "question": test.question,
+            "response": test.response,
+            "score": test.score,
+            "created_at": test.created_at
+        }
+    })
+
+# Update a speaking test
+@bp.route('/speaking-tests/<int:test_id>', methods=['PUT'])
+def update_speaking_test(test_id):
+    """Update a speaking test"""
+    data = request.get_json()
+    
+    if not data:
+        return jsonify({"status": "error", "message": "No data provided"}), 400
+    
+    test = SpeakingTest.get_test_by_id(test_id)
+    if not test:
+        return jsonify({"status": "error", "message": "Test not found"}), 404
+    
+    # Extract updatable fields from request
+    updates = {}
+    if 'question' in data:
+        updates['question'] = data['question']
+    if 'response' in data:
+        updates['response'] = data['response']
+    if 'score' in data:
+        updates['score'] = data['score']
+    
+    # Update the test
+    updated_test = SpeakingTest.update_test(test_id, **updates)
+    
+    return jsonify({
+        "status": "success", 
+        "message": "Speaking test updated successfully",
+        "data": {
+            "id": updated_test.id,
+            "user_id": updated_test.user_id,
+            "question": updated_test.question,
+            "response": updated_test.response,
+            "score": updated_test.score
+        }
+    })
+
+# Delete a speaking test
+@bp.route('/speaking-tests/<int:test_id>', methods=['DELETE'])
+def delete_speaking_test(test_id):
+    """Delete a speaking test"""
+    test = SpeakingTest.get_test_by_id(test_id)
+    if not test:
+        return jsonify({"status": "error", "message": "Test not found"}), 404
+    
+    result = SpeakingTest.delete_test(test_id)
+    
+    if result:
+        return jsonify({
+            "status": "success", 
+            "message": "Speaking test deleted successfully"
+        })
+    else:
+        return jsonify({
+            "status": "error", 
+            "message": "Failed to delete speaking test"
+        }), 500
+
+# Listening test routes
+@bp.route('/listening-tests', methods=['GET'])
+def get_listening_tests():
+    try:
+        tests = ListeningTest.get_all_tests()
+        result = [{
+            "id": test.id,
+            "user_id": test.user_id,
+            "question": test.question,
+            "audio_file": test.audio_file,
+            "response": test.response,
+            "score": test.score,
+            "created_at": test.created_at.isoformat() if test.created_at else None
+        } for test in tests]
+        return jsonify({"status": "success", "data": result})
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+@bp.route('/listening-tests', methods=['POST'])
+def create_listening_test():
+    """Create a new listening test"""
+    data = request.get_json()
+    
+    if not data or not all(key in data for key in ['user_id', 'question']):
+        return jsonify({"status": "error", "message": "Missing required fields"}), 400
+    
+    # Create new test
+    test = ListeningTest.add_test(
+        user_id=data['user_id'],
+        question=data['question'],
+        response=data.get('response'),
+        score=data.get('score')
+    )
+    
+    return jsonify({
+        "status": "success", 
+        "message": "Listening test created successfully",
+        "data": {
+            "id": test.id,
+            "user_id": test.user_id,
+            "question": test.question
+        }
+    }), 201
+    
+@bp.route('/listening-tests/upload', methods=['POST'])
+def upload_listening_test():
+    try:
+        if 'file' not in request.files:
+            return jsonify({"status": "error", "message": "No file part"}), 400
+        
+        file = request.files['file']
+        data = request.form
+        
+        if file.filename == '':
+            return jsonify({"status": "error", "message": "No file selected"}), 400
+        
+        if not file or not allowed_file(file.filename):
+            return jsonify({"status": "error", "message": "Invalid file type"}), 400
+        
+        # Ensure upload directory exists
+        os.makedirs(current_app.config['UPLOAD_FOLDER'], exist_ok=True)
+        
+        # Secure filename and save
+        filename = secure_filename(file.filename)
+        filepath = os.path.join(current_app.config['UPLOAD_FOLDER'], filename)
+        file.save(filepath)
+
+        # Create test record
+        test = ListeningTest.add_test(
+            user_id=int(data.get('user_id', 1)),  # Default to user 1 for demo
+            question=data.get('question', ''),
+            audio_file=filename,
+            response=data.get('response'),
+            score=float(data.get('score')) if data.get('score') else None
+        )
+        
+        return jsonify({
+            "status": "success",
+            "data": {
+                "id": test.id,
+                "question": test.question,
+                "audio_file": test.audio_file,
+                "audio_url": f"/uploads/{test.audio_file}"
+            }
+        }), 201
+        
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+======================
+
+backend/tests/test_crud.py:
+-------------------
+import os
+import sys
+from flask import Flask
+from models import db, User, SpeakingTest, ListeningTest
+from config import Config
+
+def create_app():
+    # Create test Flask application
+    app = Flask(__name__)
+    app.config.from_object(Config)
+    
+    # Initialize database
+    db.init_app(app)
+    
+    return app
+
+def test_user_crud():
+    """Test CRUD operations on User model"""
+    print("===== Testing User CRUD Operations =====")
+    
+    # Create a new user
+    print("\nCreating new user...")
+    user = User.add_user("Test User", "test@example.com", "password123")
+    print(f"Created user: {user.name} with ID: {user.id}")
+    
+    # Get user by ID
+    print("\nGetting user by ID...")
+    retrieved_user = User.get_user_by_id(user.id)
+    print(f"Retrieved user: {retrieved_user.name}")
+    
+    # Update user
+    print("\nUpdating user...")
+    updated_user = User.update_user(user.id, name="Updated Test User")
+    print(f"Updated user name: {updated_user.name}")
+    
+    # Get all users
+    print("\nGetting all users...")
+    all_users = User.get_all_users()
+    print(f"Total users: {len(all_users)}")
+    
+    # Delete user
+    print("\nDeleting user...")
+    result = User.delete_user(user.id)
+    print(f"User deleted: {result}")
+    
+    # Verify deletion
+    print("\nVerifying deletion...")
+    deleted_user = User.get_user_by_id(user.id)
+    print(f"User should be None: {deleted_user is None}")
+
+def test_speaking_test_crud():
+    """Test CRUD operations on SpeakingTest model"""
+    print("\n===== Testing SpeakingTest CRUD Operations =====")
+    
+    # Create a test user first
+    user = User.add_user("Speaking Test User", "speaking@example.com", "password123")
+    
+    # Create a new test
+    print("\nCreating new speaking test...")
+    test = SpeakingTest.add_test(
+        user_id=user.id,
+        question="Describe your hometown.",
+        response="My hometown is a beautiful city...",
+        score=7.5
+    )
+    print(f"Created test with ID: {test.id}")
+    
+    # Get test by ID
+    print("\nGetting test by ID...")
+    retrieved_test = SpeakingTest.get_test_by_id(test.id)
+    print(f"Retrieved test score: {retrieved_test.score}")
+    
+    # Update test
+    print("\nUpdating test...")
+    updated_test = SpeakingTest.update_test(test.id, score=8.0)
+    print(f"Updated test score: {updated_test.score}")
+    
+    # Get tests by user
+    print("\nGetting tests by user...")
+    user_tests = SpeakingTest.get_tests_by_user(user.id)
+    print(f"User tests count: {len(user_tests)}")
+    
+    # Delete test
+    print("\nDeleting test...")
+    result = SpeakingTest.delete_test(test.id)
+    print(f"Test deleted: {result}")
+    
+    # Clean up the test user
+    User.delete_user(user.id)
+
+def test_listening_test_crud():
+    """Test CRUD operations on ListeningTest model"""
+    print("\n===== Testing ListeningTest CRUD Operations =====")
+    
+    # Create a test user first
+    user = User.add_user("Listening Test User", "listening@example.com", "password123")
+    
+    # Create a new test
+    print("\nCreating new listening test...")
+    test = ListeningTest.add_test(
+        user_id=user.id,
+        question="Listen to the conversation and answer the questions.",
+        response="The conversation was about...",
+        score=6.5
+    )
+    print(f"Created test with ID: {test.id}")
+    
+    # Get test by ID
+    print("\nGetting test by ID...")
+    retrieved_test = ListeningTest.get_test_by_id(test.id)
+    print(f"Retrieved test score: {retrieved_test.score}")
+    
+    # Update test
+    print("\nUpdating test...")
+    updated_test = ListeningTest.update_test(test.id, score=7.0)
+    print(f"Updated test score: {updated_test.score}")
+    
+    # Get tests by user
+    print("\nGetting tests by user...")
+    user_tests = ListeningTest.get_tests_by_user(user.id)
+    print(f"User tests count: {len(user_tests)}")
+    
+    # Delete test
+    print("\nDeleting test...")
+    result = ListeningTest.delete_test(test.id)
+    print(f"Test deleted: {result}")
+    
+    # Clean up the test user
+    User.delete_user(user.id)
+
+if __name__ == "__main__":
+    app = create_app()
+    with app.app_context():
+        # Create tables
+        db.create_all()
+        
+        # Run tests
+        test_user_crud()
+        test_speaking_test_crud()
+        test_listening_test_crud()
+        
+        print("\nAll CRUD tests completed successfully!")
+============================
+
+backend/uploads:
+-----------------
+#contains the files which i upload
+=====================
+
+backend/app.py:
+---------------
+from flask import Flask, send_from_directory
+from flask_cors import CORS
+from models import db
+from config import Config
+from flask_migrate import Migrate
+import os
+
+# Initialize app
+app = Flask(__name__)
+app.config.from_object(Config)
+
+# Enable CORS
+CORS(app)
+
+# Database setup
+db.init_app(app)
+migrate = Migrate(app, db)
+
+# Ensure directories exist
+with app.app_context():
+    os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
+    db.create_all()
+
+# Import routes
+from routes.test_routes import bp
+app.register_blueprint(bp, url_prefix='/api')
+
+@app.route('/')
+def index():
+    return {"message": "Welcome to the IELTS Speaking Test API"}
+
+@app.route('/uploads/<filename>')
+def serve_file(filename):
+    return send_from_directory(app.config['UPLOAD_FOLDER'], filename)
+
+if __name__ == '__main__':
+    app.run(debug=True)
+============
+
+backend/config.py:
+-----------
+
+# config.py
+import os
+from dotenv import load_dotenv
+
+load_dotenv()
+
+class Config:
+    # Database
+    SQLALCHEMY_DATABASE_URI = os.getenv('DATABASE_URL', 'sqlite:///ielts.db')
+    SQLALCHEMY_TRACK_MODIFICATIONS = False
+    
+    # Security
+    SECRET_KEY = os.getenv('SECRET_KEY', 'dev-secret-key')
+    
+    # File uploads
+    UPLOAD_FOLDER = os.path.join(os.path.dirname(__file__), 'uploads')
+    ALLOWED_EXTENSIONS = {'mp3', 'wav', 'ogg'}
+    MAX_CONTENT_LENGTH = 16 * 1024 * 1024  # 16MB
+================
+
+backend/models.py:
+----------
+#models.py
+
+from flask_sqlalchemy import SQLAlchemy
+from datetime import datetime
+from werkzeug.security import generate_password_hash, check_password_hash
+
+db = SQLAlchemy()
+
+class User(db.Model):
+    """User model for IELTS platform users"""
+    __tablename__ = 'users'
+    
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(100), nullable=False)
+    email = db.Column(db.String(120), unique=True, nullable=False)
+    password_hash = db.Column(db.String(128), nullable=False)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    
+    # Relationships
+    speaking_tests = db.relationship('SpeakingTest', backref='user', lazy=True, cascade='all, delete-orphan')
+    listening_tests = db.relationship('ListeningTest', backref='user', lazy=True, cascade='all, delete-orphan')
+
+    def set_password(self, password):
+        self.password_hash = generate_password_hash(password)
+        
+    def check_password(self, password):
+        return check_password_hash(self.password_hash, password)
+
+    @classmethod
+    def create(cls, name, email, password):
+        user = cls(name=name, email=email)
+        user.set_password(password)
+        db.session.add(user)
+        db.session.commit()
+        return user
+        
+    @classmethod
+    def get_by_id(cls, user_id):
+        return cls.query.get(user_id)
+        
+    @classmethod
+    def get_by_email(cls, email):
+        return cls.query.filter_by(email=email).first()
+        
+    def update(self, **kwargs):
+        for key, value in kwargs.items():
+            if hasattr(self, key):
+                setattr(self, key, value)
+        db.session.commit()
+        return self
+        
+    def delete(self):
+        db.session.delete(self)
+        db.session.commit()
+        return True
+
+
+class SpeakingTest(db.Model):
+    """Speaking test model for IELTS speaking tests"""
+    __tablename__ = 'speaking_tests'
+    
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
+    question = db.Column(db.String(500), nullable=False)
+    response = db.Column(db.Text)
+    score = db.Column(db.Float)
+    feedback = db.Column(db.Text)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    
+    @classmethod
+    def create(cls, user_id, question, response=None, score=None, feedback=None):
+        test = cls(
+            user_id=user_id,
+            question=question,
+            response=response,
+            score=score,
+            feedback=feedback
+        )
+        db.session.add(test)
+        db.session.commit()
+        return test
+        
+    @classmethod
+    def get_by_id(cls, test_id):
+        return cls.query.get(test_id)
+        
+    @classmethod
+    def get_by_user(cls, user_id):
+        return cls.query.filter_by(user_id=user_id).all()
+        
+    def update(self, **kwargs):
+        for key, value in kwargs.items():
+            if hasattr(self, key):
+                setattr(self, key, value)
+        db.session.commit()
+        return self
+        
+    def delete(self):
+        db.session.delete(self)
+        db.session.commit()
+        return True
+
+
+class ListeningTest(db.Model):
+    """Listening test model for IELTS listening tests"""
+    __tablename__ = 'listening_tests'
+    
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
+    question = db.Column(db.String(500), nullable=False)
+    audio_url = db.Column(db.String(255))
+    response = db.Column(db.Text)
+    score = db.Column(db.Float)
+    feedback = db.Column(db.Text)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    
+    @classmethod
+    def create(cls, user_id, question, audio_url=None, response=None, score=None, feedback=None):
+        test = cls(
+            user_id=user_id,
+            question=question,
+            audio_url=audio_url,
+            response=response,
+            score=score,
+            feedback=feedback
+        )
+        db.session.add(test)
+        db.session.commit()
+        return test
+        
+    @classmethod
+    def get_by_id(cls, test_id):
+        return cls.query.get(test_id)
+        
+    @classmethod
+    def get_by_user(cls, user_id):
+        return cls.query.filter_by(user_id=user_id).all()
+        
+    def update(self, **kwargs):
+        for key, value in kwargs.items():
+            if hasattr(self, key):
+                setattr(self, key, value)
+        db.session.commit()
+        return self
+        
+    def delete(self):
+        db.session.delete(self)
+        db.session.commit()
+        return True
+================
+
+backend/requirements.txt:
+----------
+Flask==2.0.1
+Flask-SQLAlchemy==2.5.1
+Flask-Migrate==3.1.0
+python-dotenv==0.19.0
+SQLAlchemy==1.4.23
+Werkzeug==2.0.3
+flask-cors==3.0.10
+=========
+
+backend/speaking_tests.py:
+-------------
+#speaking_tests.py:
+
+from flask import Blueprint, request, jsonify
+from models import db, User, SpeakingTest
+from werkzeug.exceptions import BadRequest, NotFound, Conflict
+from datetime import datetime
+from functools import wraps
+
+bp = Blueprint('speaking_tests', __name__, url_prefix='/api/speaking-tests')
+
+def validate_json(f):
+    @wraps(f)
+    def wrapper(*args, **kwargs):
+        if not request.is_json:
+            raise BadRequest('Request must be JSON')
+        return f(*args, **kwargs)
+    return wrapper
+
+def get_user_or_404(user_id):
+    user = User.get_by_id(user_id)
+    if not user:
+        raise NotFound('User not found')
+    return user
+
+def get_test_or_404(test_id):
+    test = SpeakingTest.get_by_id(test_id)
+    if not test:
+        raise NotFound('Speaking test not found')
+    return test
+
+@bp.route('', methods=['POST'])
+@validate_json
+def create_speaking_test():
+    data = request.get_json()
+    
+    required_fields = ['user_id', 'question']
+    if not all(field in data for field in required_fields):
+        raise BadRequest('Missing required fields: user_id, question')
+    
+    get_user_or_404(data['user_id'])  # Validate user exists
+    
+    test = SpeakingTest.create(
+        user_id=data['user_id'],
+        question=data['question'],
+        response=data.get('response'),
+        score=data.get('score'),
+        feedback=data.get('feedback')
+    )
+    
+    return jsonify({
+        'status': 'success',
+        'data': {
+            'id': test.id,
+            'user_id': test.user_id,
+            'question': test.question,
+            'created_at': test.created_at.isoformat()
+        }
+    }), 201
+
+@bp.route('/<int:test_id>', methods=['GET'])
+def get_speaking_test(test_id):
+    test = get_test_or_404(test_id)
+    
+    return jsonify({
+        'status': 'success',
+        'data': {
+            'id': test.id,
+            'user_id': test.user_id,
+            'question': test.question,
+            'response': test.response,
+            'score': test.score,
+            'feedback': test.feedback,
+            'created_at': test.created_at.isoformat(),
+            'updated_at': test.updated_at.isoformat() if test.updated_at else None
+        }
+    })
+
+@bp.route('/user/<int:user_id>', methods=['GET'])
+def get_user_speaking_tests(user_id):
+    get_user_or_404(user_id)  # Validate user exists
+    tests = SpeakingTest.get_by_user(user_id)
+    
+    return jsonify({
+        'status': 'success',
+        'data': [{
+            'id': test.id,
+            'question': test.question,
+            'score': test.score,
+            'created_at': test.created_at.isoformat()
+        } for test in tests]
+    })
+
+@bp.route('/<int:test_id>', methods=['PUT'])
+@validate_json
+def update_speaking_test(test_id):
+    test = get_test_or_404(test_id)
+    data = request.get_json()
+    
+    updatable_fields = ['question', 'response', 'score', 'feedback']
+    updates = {k: v for k, v in data.items() if k in updatable_fields}
+    
+    if not updates:
+        raise BadRequest('No valid fields provided for update')
+    
+    test.update(**updates)
+    
+    return jsonify({
+        'status': 'success',
+        'data': {
+            'id': test.id,
+            'updated_fields': list(updates.keys())
+        }
+    })
+
+@bp.route('/<int:test_id>', methods=['DELETE'])
+def delete_speaking_test(test_id):
+    test = get_test_or_404(test_id)
+    test.delete()
+    
+    return jsonify({
+        'status': 'success',
+        'message': 'Speaking test deleted'
+    })
+
+@bp.errorhandler(BadRequest)
+@bp.errorhandler(NotFound)
+@bp.errorhandler(Conflict)
+def handle_error(e):
+    return jsonify({
+        'status': 'error',
+        'message': e.description
+    }), e.code
+=====================
+
+backend/test_speaking_tests.py:
+-------------
+#test_speaking_tests.py:
+
+# test_speaking_tests.py
+import pytest
+from app import create_app
+from models import db, User, SpeakingTest
+from config import Config
+
+class TestConfig(Config):
+    TESTING = True
+    SQLALCHEMY_DATABASE_URI = 'sqlite:///:memory:'
+
+@pytest.fixture
+def app():
+    app = create_app(TestConfig)
+    with app.app_context():
+        db.create_all()
+        # Create a test user
+        user = User.create(name="Test User", email="test@example.com", password="password")
+        yield app
+        db.drop_all()
+
+@pytest.fixture
+def client(app):
+    return app.test_client()
+
+def test_create_speaking_test(client):
+    # Create a speaking test
+    response = client.post('/api/speaking-tests', json={
+        'user_id': 1,
+        'question': 'Describe your hometown'
+    })
+    assert response.status_code == 201
+    data = response.get_json()
+    assert data['status'] == 'success'
+    assert data['data']['question'] == 'Describe your hometown'
+
+def test_get_speaking_test(client):
+    # First create a test
+    client.post('/api/speaking-tests', json={
+        'user_id': 1,
+        'question': 'Describe your hometown'
+    })
+    
+    # Then retrieve it
+    response = client.get('/api/speaking-tests/1')
+    assert response.status_code == 200
+    data = response.get_json()
+    assert data['status'] == 'success'
+    assert data['data']['id'] == 1
+
+def test_update_speaking_test(client):
+    # Create test
+    client.post('/api/speaking-tests', json={
+        'user_id': 1,
+        'question': 'Describe your hometown'
+    })
+    
+    # Update test
+    response = client.put('/api/speaking-tests/1', json={
+        'response': 'My hometown is a small city...',
+        'score': 7.5
+    })
+    assert response.status_code == 200
+    data = response.get_json()
+    assert data['status'] == 'success'
+    assert 'response' in data['data']['updated_fields']
+    assert 'score' in data['data']['updated_fields']
+
+def test_delete_speaking_test(client):
+    # Create test
+    client.post('/api/speaking-tests', json={
+        'user_id': 1,
+        'question': 'Describe your hometown'
+    })
+    
+    # Delete test
+    response = client.delete('/api/speaking-tests/1')
+    assert response.status_code == 200
+    data = response.get_json()
+    assert data['status'] == 'success'
+    
+    # Verify deletion
+    response = client.get('/api/speaking-tests/1')
+    assert response.status_code == 404
+====================
+
+backend/.venv/:
+---------
+#virtual environment folder...
